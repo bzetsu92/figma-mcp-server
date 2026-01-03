@@ -12,7 +12,7 @@ if (!isVerbose) {
 
 config();
 
-import { createServer } from "../mcp/index.js";
+import { createServer } from "../../mcp/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";

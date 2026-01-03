@@ -7,9 +7,9 @@
             "@core/*": ["./src/core/*"],
             "@figma/*": ["./src/figma/*"],
             "@mcp/*": ["./src/mcp/*"],
-            "@shared/*": ["./src/shared/*"],
-            "@extractors/*": ["./src/extractors/*"],
-            "@transformers/*": ["./src/transformers/*"]
+            "@shared/*": ["./src/figma/shared/*"],
+            "@extractors/*": ["./src/figma/extractors/*"],
+            "@transformers/*": ["./src/figma/transformers/*"]
         },
 
         "target": "ES2022",

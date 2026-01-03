@@ -5,8 +5,12 @@ import { Logger } from "~/logger";
 import {
     downloadFigmaImagesTool,
     getFigmaDataTool,
+    generateUTTool,
+    checkCodeTool,
     type DownloadImagesParams,
     type GetFigmaDataParams,
+    type GenerateUTParams,
+    type CheckCodeParams,
 } from "../../tools";
 
 export interface McpServerOptions {
@@ -60,6 +64,20 @@ export class FigmaMcpServer {
                 (params: DownloadImagesParams) => downloadFigmaImagesTool.handler(params, this.figmaClient),
             );
         }
+
+        this.server.tool(
+            generateUTTool.name,
+            generateUTTool.description,
+            generateUTTool.parameters,
+            (params: GenerateUTParams) => generateUTTool.handler(params, this.figmaClient),
+        );
+
+        this.server.tool(
+            checkCodeTool.name,
+            checkCodeTool.description,
+            checkCodeTool.parameters,
+            (params: CheckCodeParams) => checkCodeTool.handler(params, this.figmaClient),
+        );
     }
 
     getServer(): McpServer {

@@ -8,6 +8,7 @@ import {
 } from "@extractors/index";
 import yaml from "js-yaml";
 import { Logger, writeLogs } from "~/logger";
+import type { ExtractedNode } from "@extractors/types";
 
 const parameters = {
     fileKey: z
@@ -32,6 +33,13 @@ const parameters = {
         .describe(
             "OPTIONAL. Do NOT use unless explicitly requested by the user. Controls how many levels deep to traverse the node tree.",
         ),
+    simplified: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+            "If true, returns simplified screen data (screen name, components, fields, actions) instead of full design data. Use this for prompt building.",
+        ),
 };
 
 const parametersSchema = z.object(parameters);
@@ -43,13 +51,122 @@ function formatError(error: unknown): string {
     return JSON.stringify(error);
 }
 
+interface SimplifiedScreenData {
+    screen: string;
+    components: string[];
+    fields: Array<{ name: string; type: string }>;
+    actions: string[];
+}
+
+function extractFieldsFromNodes(nodes: ExtractedNode[]): Array<{ name: string; type: string }> {
+    const fields: Array<{ name: string; type: string }> = [];
+    
+    function traverse(node: ExtractedNode) {
+        if (node.isInput || node.inputType) {
+            const fieldName = node.name || node.text || "unnamed";
+            const fieldType = node.inputType || 
+                            (node.name?.toLowerCase().includes("password") ? "password" : "text");
+            fields.push({ name: fieldName, type: fieldType });
+        }
+        
+        if (node.text) {
+            const textLower = node.text.toLowerCase();
+            if (textLower.includes("email") || textLower.includes("@")) {
+                fields.push({ name: "email", type: "text" });
+            }
+            if (textLower.includes("password")) {
+                fields.push({ name: "password", type: "password" });
+            }
+        }
+        
+        if (node.componentProperties) {
+            for (const prop of node.componentProperties) {
+                if (prop.type === "TEXT" || prop.type === "BOOLEAN") {
+                    const propName = prop.name.toLowerCase();
+                    if (propName.includes("input") || propName.includes("field") || 
+                        propName.includes("email") || propName.includes("password")) {
+                        fields.push({
+                            name: prop.name,
+                            type: prop.type === "BOOLEAN" ? "checkbox" : "text"
+                        });
+                    }
+                }
+            }
+        }
+        
+        if (node.children) {
+            node.children.forEach(traverse);
+        }
+    }
+    
+    nodes.forEach(traverse);
+    return Array.from(new Map(fields.map(f => [f.name, f])).values());
+}
+
+function extractComponentsFromNodes(nodes: ExtractedNode[]): string[] {
+    const components = new Set<string>();
+    
+    function traverse(node: ExtractedNode) {
+        if (node.componentId) {
+            components.add(node.name || "UnnamedComponent");
+        }
+        
+        const name = node.name?.toLowerCase() || "";
+        if (name.includes("button") || name.includes("input") || 
+            name.includes("select") || name.includes("checkbox") ||
+            name.includes("form") || name.includes("field")) {
+            components.add(node.name || "UnnamedComponent");
+        }
+        
+        if (node.children) {
+            node.children.forEach(traverse);
+        }
+    }
+    
+    nodes.forEach(traverse);
+    return Array.from(components);
+}
+
+function extractActionsFromNodes(nodes: ExtractedNode[]): string[] {
+    const actions = new Set<string>();
+    
+    function traverse(node: ExtractedNode) {
+        const name = node.name?.toLowerCase() || "";
+        const text = node.text?.toLowerCase() || "";
+        
+        if (name.includes("submit") || text.includes("submit") || 
+            name.includes("login") || text.includes("login") ||
+            name.includes("save") || text.includes("save")) {
+            actions.add("submit");
+        }
+        
+        if (name.includes("button") || name.includes("click") || 
+            node.type === "INSTANCE" && name.includes("btn")) {
+            actions.add("click");
+        }
+        
+        if (name.includes("navigate") || name.includes("link") || 
+            name.includes("route") || text.includes("go to") ||
+            text.includes("navigate")) {
+            actions.add("navigation");
+        }
+        
+        if (node.children) {
+            node.children.forEach(traverse);
+        }
+    }
+    
+    nodes.forEach(traverse);
+    return Array.from(actions);
+}
+
 async function getFigmaData(
     params: GetFigmaDataParams,
     figmaClient: FigmaClient,
     outputFormat: "yaml" | "json",
 ) {
     try {
-        const { fileKey, nodeId: rawNodeId, depth } = parametersSchema.parse(params);
+        const { fileKey, nodeId: rawNodeId, depth, simplified } = parametersSchema.parse(params);
         const nodeId = rawNodeId?.replace(/-/g, ":");
 
         Logger.log(
@@ -98,6 +215,31 @@ async function getFigmaData(
             }
         }
 
+        if (simplified) {
+            const screenName = simplifiedDesign.name || 
+                              simplifiedDesign.nodes[0]?.name || 
+                              "UnknownScreen";
+            
+            const components = extractComponentsFromNodes(simplifiedDesign.nodes);
+            const fields = extractFieldsFromNodes(simplifiedDesign.nodes);
+            const actions = extractActionsFromNodes(simplifiedDesign.nodes);
+            
+            const simplifiedResult: SimplifiedScreenData = {
+                screen: screenName,
+                components,
+                fields,
+                actions,
+            };
+            
+            Logger.log(
+                `Successfully extracted simplified screen data: ${simplifiedResult.screen}, ${simplifiedResult.components.length} components, ${simplifiedResult.fields.length} fields, ${simplifiedResult.actions.length} actions`,
+            );
+            
+            return {
+                content: [{ type: "text" as const, text: JSON.stringify(simplifiedResult, null, 2) }],
+            };
+        }
+
         const { nodes, globalVars, ...metadata } = simplifiedDesign;
         const result = {
             metadata,
@@ -142,7 +284,7 @@ async function getFigmaData(
 export const getFigmaDataTool = {
     name: "get_figma_data",
     description:
-        "Get comprehensive Figma file data including layout, content, visuals, and component information",
+        "Get Figma file data. Use simplified=true for screen data (screen name, components, fields, actions) for prompt building. Use simplified=false (default) for comprehensive design data including layout, content, visuals, and component information.",
     parameters,
     handler: getFigmaData,
 } as const;

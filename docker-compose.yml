@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+    figma-mcp-server:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        container_name: figma-mcp-server
+        ports:
+            - "3333:3333"
+        environment:
+            - FIGMA_API_KEY=${FIGMA_API_KEY}
+            - FIGMA_OAUTH_TOKEN=${FIGMA_OAUTH_TOKEN:-}
+            - PORT=3333
+            - OUTPUT_FORMAT=${OUTPUT_FORMAT:-json}
+            - SKIP_IMAGE_DOWNLOADS=${SKIP_IMAGE_DOWNLOADS:-true}
+            - DOCS_PATH=${DOCS_PATH:-}
+            - NODE_ENV=production
+        volumes:
+            - ./docs:/app/docs
+            - ./logs:/app/logs
+        restart: unless-stopped
+
+networks:
+    default:
+        name: figma-mcp-network

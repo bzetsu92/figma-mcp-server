@@ -1,124 +1,260 @@
-# Figma MCP Server
+# Figma + Docs → Prompt Builder Tool
 
-A Model Context Protocol (MCP) server that provides AI assistants with comprehensive access to Figma design data. This server enables AI tools like Cursor and Claude Desktop to fetch design information, extract component details, and download assets from Figma files.
+Tool để thu thập context từ Figma + tài liệu → build prompt chuẩn → đưa vào Cursor để generate Unit Tests.
 
-## Prerequisites
+## ⚠️ Lưu ý quan trọng
 
-- Node.js >= 18.0.0
-- Figma API key ([Get one here](https://www.figma.com/developers/api#access-tokens))
+- **Tool KHÔNG hiểu source code**
+- **Tool KHÔNG generate Unit Tests**
+- **Cursor làm 100% phần "hiểu source" và generate UT**
 
-## Installation
+## Tổng quan luồng kỹ thuật
 
-```bash
-# Clone the repository
-git clone <https://github.com/bzetsu92/figma-mcp-server.git>
-cd figma-mcp-server
+```
+Figma API  ─┐
+            ├─> MCP Layer ──> JSON Context
+Docs Parser ┘
 
-# Install dependencies
-npm install
-
-# Build the project
-npm run build
+JSON Context
+      ↓
+Prompt Builder (NodeJS)
+      ↓
+prompt.md
+      ↓
+(copy / webhook / agent)
+      ↓
+Cursor (source local)
+      ↓
+Generate UT .md → ut-docs/
 ```
 
-## Adding to Cursor
+## Thành phần
 
-1. Open Cursor Settings → Features → Model Context Protocol
+### 1. Figma MCP Server (`figma-mcp/`)
 
-2. Click "Add MCP Server" or edit your MCP settings file (usually `~/.cursor/mcp.json` or in Cursor settings)
+**Mục đích**: Lấy thông tin màn hình từ Figma (không lấy code UI).
 
-3. Add the following configuration:
+**Tool**: `get_figma_data`
 
+Input:
+- `fileKey`: Figma file key
+- `nodeId`: Node ID (optional)
+- `simplified`: `true` để lấy simplified screen data (screen, components, fields, actions)
+- `simplified`: `false` (default) để lấy full design data
+
+**Simplified Output** (khi `simplified=true`):
 ```json
 {
-  "mcpServers": {
-    "figma": {
-      "transport": "http",
-      "url": "http://localhost:3333/mcp"
-    }
-  }
+  "screen": "Login",
+  "components": ["EmailInput", "PasswordInput", "SubmitButton"],
+  "fields": [
+    { "name": "email", "type": "text" },
+    { "name": "password", "type": "password" }
+  ],
+  "actions": ["submit"]
 }
 ```
 
-**Important**: Replace `/absolute/path/to/Figma-Context-MCP` with the actual absolute path to your project directory.
+### 2. Docs Parser MCP Server (`docs_parser-mcp/`)
 
-4. Restart Cursor
+**Mục đích**: Parse PDF/DOC/XLSX và extract business rules **theo context của screen từ Figma**.
 
-5. Verify the MCP server is connected by checking the MCP status in Cursor settings
+**Tool**: `parse_docs`
 
-## Usage
+Input:
+- `filePath`: Đường dẫn đến file
+- `screenContext` (optional): Context từ Figma để filter relevant content
+  - `screen`: Tên screen
+  - `components`: Danh sách components
+  - `fields`: Danh sách fields
+  - `actions`: Danh sách actions
 
-Once configured, you can use the MCP tools in your AI assistant:
+**⚠️ Quan trọng**: Luôn truyền `screenContext` từ Figma để chỉ lấy rules/flows liên quan đến screen đó.
 
-### Get Figma Data
-
-Ask your AI assistant to fetch Figma design data:
-
-```
-"Get the design data from this Figma file: https://www.figma.com/design/oXcy3FGjqSqYiiHJc3CAJb/MCP_Testing?node-id=1005-3058"
-```
-
-The AI will use the `get_figma_data` tool to fetch:
-- Layout information
-- Component properties and variants
-- Design tokens and styles
-- Text content
-- Visual elements
-
-## MCP Tools
-
-### `get_figma_data`
-
-Fetches comprehensive Figma file data including layout, content, visuals, and component information.
-
-**Parameters:**
-- `fileKey` (string, required): The Figma file key from the URL
-- `nodeId` (string, optional): Specific node ID to fetch (reduces API calls)
-- `depth` (number, optional): How many levels deep to traverse (use sparingly)
-
-**Example Response:**
-```yaml
-nodes:
-  - id: "1005:3058"
-    type: "FRAME"
-    name: "Screen"
-    layout:
-      x: 0
-      y: 0
-      width: 375
-      height: 812
-    styles:
-      backgroundColor: "#FFFFFF"
-    children: [...]
-globalVars:
-  styles: {...}
-metadata:
-  name: "MCP_Testing"
-  lastModified: "2024-01-01T00:00:00Z"
+Output JSON:
+```json
+{
+  "rules": [
+    "Email is required",
+    "Password minimum 8 characters"
+  ],
+  "flows": [
+    "User enters email and password",
+    "System validates credentials"
+  ]
+}
 ```
 
-### `download_figma_images`
+### 3. Prompt Builder Service (`prompt-builder-mcp/`)
 
-Downloads PNG or SVG images from Figma nodes. Only available if `SKIP_IMAGE_DOWNLOADS=false`.
+**Mục đích**: Merge JSON từ Figma + Docs → generate prompt.md
 
-**Parameters:**
-- `fileKey` (string, required): The Figma file key
-- `nodes` (array, required): Array of node objects with `nodeId` and `fileName`
-- `localPath` (string, required): Directory to save images
-- `pngScale` (number, optional): PNG export scale (default: 2)
+**Chức năng**:
+- Nhận JSON từ 2 MCP servers
+- Merge thành 1 prompt duy nhất
+- Không thêm suy luận
+- Không đoán logic backend
 
-## API Endpoints (HTTP Mode)
+**Output**: `prompt.md` theo template chuẩn
 
-When running in HTTP mode (not stdio), the server provides:
+## Cài đặt
 
-- `GET /health` - Health check
-- `GET /docs` - Swagger UI documentation
-- `POST /mcp` - MCP protocol endpoint
+### Prerequisites
+
+- Node.js >= 18
+- Docker & Docker Compose (optional)
+- Figma API Key
+
+### Setup từng service
+
+#### Figma MCP
+
+```bash
+cd figma-mcp
+cp env.example .env
+# Edit .env với FIGMA_API_KEY của bạn
+npm install
+npm run build
+```
+
+#### Docs Parser MCP
+
+```bash
+cd docs_parser-mcp
+npm install
+npm run build
+```
+
+#### Prompt Builder
+
+```bash
+cd prompt-builder-mcp
+npm install
+npm run build
+```
+
+### Docker Compose (Recommended)
+
+```bash
+# Tạo .env file ở root
+FIGMA_API_KEY=figd_xxx
+
+# Start tất cả services
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f
+```
+
+## Sử dụng
+
+### Bước 1: Lấy data từ Figma
+
+```bash
+# Gọi MCP tool get_figma_data với simplified=true
+# Output: figma-screen.json
+# {
+#   "screen": "Login",
+#   "components": ["EmailInput", "PasswordInput"],
+#   "fields": [{"name": "email", "type": "text"}, ...],
+#   "actions": ["submit"]
+# }
+```
+
+### Bước 2: Parse tài liệu với screen context
+
+```bash
+# Gọi MCP tool parse_docs với filePath VÀ screenContext từ Figma
+# parse_docs({
+#   filePath: "./docs/requirements.md",
+#   screenContext: figmaScreenData  // <-- Quan trọng!
+# })
+# Output: docs-data.json (chỉ rules/flows liên quan đến Login screen)
+```
+
+### Bước 3: Build prompt
+
+```bash
+# Option 1: CLI
+cd prompt-builder-mcp
+node dist/main.js ../data/figma-screen.json ../data/docs-data.json ../prompts/login.prompt.md
+
+# Option 2: HTTP API
+curl -X POST http://localhost:3001/build-prompt-from-files \
+  -H "Content-Type: application/json" \
+  -d '{
+    "figmaJsonPath": "./data/figma-screen.json",
+    "docsJsonPath": "./data/docs-data.json",
+    "outputPath": "./prompts/login.prompt.md"
+  }'
+```
+
+### Bước 4: Sử dụng prompt trong Cursor
+
+1. Mở Cursor với source code local
+2. Paste prompt vào Cursor
+3. Cursor sẽ:
+   - Đọc source code
+   - Mapping UI → API → service
+   - Generate Unit Tests
+   - Ghi vào `ut-docs/<screen-name>/<screen-name>.ut.md`
+
+## Output Structure
+
+```
+ut-docs/
+├─ login/
+│  └─ login.ut.md
+├─ register/
+│  └─ register.ut.md
+└─ ...
+```
+
+Mỗi screen = 1 folder, Cursor tự động tạo structure này.
+
+## Development
+
+### Run từng service riêng lẻ
+
+```bash
+# Figma MCP (HTTP mode)
+cd figma-mcp
+npm start
+
+# Docs Parser MCP (stdio mode)
+cd docs_parser-mcp
+npm start
+
+# Prompt Builder (HTTP mode)
+cd prompt-builder-mcp
+npm run http
+```
+
+### Test
+
+```bash
+# Test Figma MCP
+cd figma-mcp
+npm test
+
+# Test integration
+# (TBD)
+```
+
+## Cấu trúc thư mục
+
+```
+.
+├── figma-mcp/          # Figma MCP Server
+├── docs_parser-mcp/    # Docs Parser MCP Server
+├── prompt-builder-mcp/ # Prompt Builder Service
+├── docker-compose.yml  # Docker orchestration
+├── prompts/            # Generated prompts (gitignored)
+├── data/               # Temporary JSON data (gitignored)
+└── ut-docs/            # Generated UT docs (gitignored)
+```
 
 ## License
 
 MIT
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.

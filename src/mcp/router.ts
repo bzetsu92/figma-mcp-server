@@ -1,7 +1,7 @@
 import express, { type Router } from "express";
 import swaggerUi from "swagger-ui-express";
 import { createOpenApiSpec } from "./openapi";
-import { getFigmaDataTool, downloadFigmaImagesTool } from "~/tools";
+import { getFigmaDataTool, downloadFigmaImagesTool, generateUTTool, checkCodeTool } from "~/tools";
 import { FigmaClient } from "~/figma";
 import { config } from "dotenv";
 import { resolve } from "path";
@@ -16,6 +16,16 @@ export function createMcpRouter(skipImageDownloads: boolean): Router {
             name: getFigmaDataTool.name,
             description: getFigmaDataTool.description,
             parameters: getFigmaDataTool.parameters,
+        },
+        {
+            name: generateUTTool.name,
+            description: generateUTTool.description,
+            parameters: generateUTTool.parameters,
+        },
+        {
+            name: checkCodeTool.name,
+            description: checkCodeTool.description,
+            parameters: checkCodeTool.parameters,
         },
     ];
 
@@ -40,10 +50,9 @@ export function createMcpRouter(skipImageDownloads: boolean): Router {
         res.json({ status: "ok", service: "figma-mcp-server" });
     });
 
-    // Test endpoint to fetch Figma data directly (bypasses MCP protocol)
     router.post("/test/get-figma-data", async (req, res) => {
         try {
-            const { fileKey, nodeId } = req.body;
+            const { fileKey, nodeId, simplified } = req.body;
             
             if (!fileKey) {
                 return res.status(400).json({ error: "fileKey is required" });
@@ -61,7 +70,7 @@ export function createMcpRouter(skipImageDownloads: boolean): Router {
             });
 
             const result = await getFigmaDataTool.handler(
-                { fileKey, nodeId },
+                { fileKey, nodeId, simplified: simplified === true },
                 figmaClient,
                 "json",
             );
